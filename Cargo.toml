@@ -1,0 +1,23 @@
+[package]
+name = "askama-lsp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tower-lsp-server = "0.23.0"
+tower-service = "0.3.3"
+tokio = { version = "1.53.3", features = ["full"] }
+serde = "1.0.229"
+serde_json = "1.0.154"
+syn = { version = "3.0.9", features = ["parsing", "full"] }
+quote = { version = "1.0.47", features = ["proc-macro"]}
+proc-macro2 = { version = "1.0.107", features = ["span-locations"]}
+cargo_toml = "1.0.1"
+
+tracing = { version = "0.1.44", features = ["async-await"] }
+tracing-subscriber = "0.3.23"
+
+[package.metadata.askama-lsp]
+templates = ["./pidoras"]
+source_directories = ["./huesos"]
+templates_extensions = ["html"]
