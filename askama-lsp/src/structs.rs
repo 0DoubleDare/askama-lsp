@@ -1,7 +1,13 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
-use tokio::sync::{RwLock};
-use tower_lsp_server::{Client, ls_types::{Uri, WorkspaceFolder}};
+use tokio::sync::RwLock;
+use tower_lsp_server::{
+    Client,
+    ls_types::{Uri, WorkspaceFolder},
+};
 
 use crate::config::AskamaLspConfig;
 
@@ -28,7 +34,7 @@ pub struct Buffers {
 
 #[derive(Debug)]
 pub struct Backend {
-    pub config: AskamaLspConfig,
+    pub config: Arc<RwLock<AskamaLspConfig>>,
     pub workspace_folders: Mutex<Vec<WorkspaceFolder>>,
     pub client: Client,
     pub buffers: Buffers,
