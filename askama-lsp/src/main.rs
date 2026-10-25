@@ -1,4 +1,7 @@
-use std::{error::Error, path::PathBuf, sync::{Arc, Mutex}};
+use std::{
+    error::Error,
+    sync::{Arc, Mutex},
+};
 
 use askama_lsp::{
     config::AskamaLspConfig,
@@ -17,16 +20,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tracing::info!("Initialize logging");
 
-    let config = AskamaLspConfig::new(PathBuf::from("Cargo.toml")).unwrap_or_default();
+    let config = AskamaLspConfig::default();
 
-    tracing::info!("Initialize config: {:#?}", config);
+    tracing::info!("Initialize default config: {:#?}", config);
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
     let (service, socket) = LspService::build(|client| Backend {
         client,
-        config,
+        config: Arc::new(RwLock::new(config)),
         buffers: Buffers {
             fields_cache: Arc::new(RwLock::new(TemplateBuffers::with_capacity(512))),
             documents: Arc::new(RwLock::new(DocumentBuffers::with_capacity(512))),
