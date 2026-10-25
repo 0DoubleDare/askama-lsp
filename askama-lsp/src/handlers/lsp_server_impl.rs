@@ -83,13 +83,13 @@ impl LanguageServer for Backend {
             }
         }
 
-        let items: Vec<CompletionItem> = vec![CompletionItem {
-            label: "name".to_string(),
-            kind: Some(CompletionItemKind::FIELD),
-            detail: Some("Жопа".to_string()),
-            documentation: Some(Documentation::String("Не беси меня далбаеб".to_string())),
-            ..Default::default()
-        }];
+        // let items: Vec<CompletionItem> = vec![CompletionItem {
+        //     label: "name".to_string(),
+        //     kind: Some(CompletionItemKind::FIELD),
+        //     detail: Some("Жопа".to_string()),
+        //     documentation: Some(Documentation::String("Не беси меня далбаеб".to_string())),
+        //     ..Default::default()
+        // }];
 
         Ok(Some(CompletionResponse::Array(items)))
     }
