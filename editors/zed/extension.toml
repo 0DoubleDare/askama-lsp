@@ -1,0 +1,12 @@
+id = "askama-lsp"
+name = "Askama LSP"
+version = "0.0.1"
+schema_version = 1
+authors = ["Nikita Lider <doubledare.dev@gmail.com>"]
+description = "Support askama completion in zed"
+repository = "https://github.com/0DoubleDare/askama-lsp"
+
+[language_servers.askama-lsp]
+name = "askama-lsp"
+languages = ["HTML", "Rust"]
+command = ["./askama-lsp"]
