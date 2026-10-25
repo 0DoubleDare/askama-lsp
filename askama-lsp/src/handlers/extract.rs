@@ -12,7 +12,7 @@ impl Backend {
         content: &str,
         buffer: &mut TemplateBuffers,
     ) -> Result<(), Box<dyn Error>> {
-        if let Ok(tree) = syn::parse_file(&content) {
+        if let Ok(tree) = syn::parse_file(&content){
             for item in tree.items {
                 if let Item::Struct(struct_item) = item {
                     let struct_name = &struct_item.ident;

@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tracing::info!("Initialize logging");
 
-    let config = AskamaLspConfig::new(PathBuf::from("Cargo.toml"))?;
+    let config = AskamaLspConfig::new(PathBuf::from("Cargo.toml")).unwrap_or_default();
 
     tracing::info!("Initialize config: {:#?}", config);
 
