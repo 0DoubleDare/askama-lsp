@@ -7,6 +7,7 @@ use std::{
 use quote::ToTokens;
 use syn::{Fields, Item, ItemStruct, LitStr, spanned::Spanned};
 use tower_lsp_server::ls_types::Uri;
+use tracing::{debug, trace, warn};
 
 use crate::{
     config::AskamaLspConfig,
@@ -15,65 +16,7 @@ use crate::{
 
 impl Backend {
     pub fn parse_rust_file(&self, content: &str) -> Vec<TemplateFieldInfo> {
-        let mut fields = Vec::new();
-
-        if let Ok(ast_tree) = syn::parse_file(content) {
-            for token in ast_tree.items {
-                if let Item::Struct(struct_item) = token {
-                    if let Some(template_path) = self.extract_template_path(&struct_item) {
-                        self.extract_struct_fields(
-                            &struct_item,
-                            template_path.as_str(),
-                            &mut fields,
-                        );
-                    }
-                }
-            }
-        }
-
-        fields
-    }
-
-    fn extract_struct_fields(
-        &self,
-        struct_item: &ItemStruct,
-        template_path: &str,
-        fields: &mut Vec<TemplateFieldInfo>,
-    ) {
-        if let Fields::Named(fields_named) = &struct_item.fields {
-            for field in &fields_named.named {
-                if let Some(name) = &field.ident {
-                    fields.push(TemplateFieldInfo {
-                        relative_template_path: template_path.to_string(),
-                        parent_struct: struct_item.ident.to_string(),
-                        raw_type: field.ty.to_token_stream().to_string(),
-                        name: name.to_string(),
-                        line: field.span().start().line,
-                        character: field.span().start().column,
-                    });
-                }
-            }
-        }
-    }
-
-    pub fn extract_template_path(&self, item_struct: &ItemStruct) -> Option<String> {
-        for attr in &item_struct.attrs {
-            if attr.path().is_ident("template") {
-                let mut template_path: Option<String> = None;
-                let _ = attr.parse_nested_meta(|meta| {
-                    if meta.path.is_ident("path") {
-                        let literal = meta.value()?.parse::<LitStr>()?;
-                        template_path = Some(literal.value());
-                    }
-                    Ok(())
-                });
-
-                if let Some(template_path) = template_path {
-                    return Some(template_path);
-                }
-            }
-        }
-        None
+        parse_template_fields(content)
     }
 
     fn workspace_roots(&self) -> Vec<PathBuf> {
@@ -99,14 +42,25 @@ impl Backend {
         let config = self.config.read().await.clone();
         let mut result: TemplateBuffers = HashMap::new();
 
+        debug!(
+            workspace_roots = ?roots,
+            source_directories = ?config.source_directories,
+            "Refreshing Askama field cache"
+        );
+
         for source_file in self.collect_source_files(roots.as_slice(), &config.source_directories) {
-            if let Ok(content) = fs::read_to_string(&source_file) {
-                self.collect_rust_fields_for_content(
+            match fs::read_to_string(&source_file) {
+                Ok(content) => self.collect_rust_fields_for_content(
                     &content,
                     roots.as_slice(),
                     &config,
                     &mut result,
-                );
+                ),
+                Err(error) => warn!(
+                    source_file = %source_file.display(),
+                    %error,
+                    "Failed to read Rust source file while building field cache"
+                ),
             }
         }
 
@@ -127,6 +81,12 @@ impl Backend {
             fields.retain(|field| seen.insert((field.parent_struct.clone(), field.name.clone())));
         }
 
+        debug!(
+            template_count = result.len(),
+            field_count = result.values().map(Vec::len).sum::<usize>(),
+            "Completed Askama field cache refresh"
+        );
+
         let mut field_cache_guard = self.buffers.fields_cache.write().await;
         *field_cache_guard = result;
     }
@@ -143,6 +103,14 @@ impl Backend {
                 field_info.relative_template_path.as_str(),
                 roots,
                 config,
+            );
+
+            trace!(
+                template_path = %field_info.relative_template_path,
+                discovered_template_uris = ?template_uris,
+                field = %field_info.name,
+                parent_struct = %field_info.parent_struct,
+                "Mapping extracted Rust field into template cache"
             );
 
             for template_uri in template_uris {
@@ -197,7 +165,7 @@ impl Backend {
         let template = Path::new(template_path);
 
         if template.is_absolute() {
-            if let Some(uri) = Uri::from_file_path(template) {
+            if let Some(uri) = Uri::from_file_path(normalize_path(template.to_path_buf())) {
                 uris.push(uri.to_string());
             }
             return uris;
@@ -205,7 +173,7 @@ impl Backend {
 
         for root in roots {
             for template_dir in &config.templates {
-                let full_path = root.join(template_dir).join(template_path);
+                let full_path = normalize_path(root.join(template_dir).join(template_path));
                 if let Some(uri) = Uri::from_file_path(full_path.as_path()) {
                     uris.push(uri.to_string());
                 }
@@ -213,5 +181,122 @@ impl Backend {
         }
 
         uris
+    }
+}
+
+fn parse_template_fields(content: &str) -> Vec<TemplateFieldInfo> {
+    let mut fields = Vec::new();
+    match syn::parse_file(content) {
+        Ok(ast_tree) => {
+            collect_template_fields(ast_tree.items.as_slice(), &mut fields);
+            debug!(
+                field_count = fields.len(),
+                "Parsed Askama template fields from Rust content"
+            );
+        }
+        Err(error) => {
+            warn!(%error, "Failed to parse Rust source for Askama template field extraction");
+        }
+    }
+    fields
+}
+
+fn collect_template_fields(items: &[Item], fields: &mut Vec<TemplateFieldInfo>) {
+    for token in items {
+        match token {
+            Item::Struct(struct_item) => {
+                if let Some(template_path) = extract_template_path(struct_item) {
+                    trace!(
+                        parent_struct = %struct_item.ident,
+                        template_path = %template_path,
+                        "Found Askama template struct"
+                    );
+                    extract_struct_fields(struct_item, template_path.as_str(), fields);
+                }
+            }
+            Item::Mod(module) => {
+                if let Some((_, module_items)) = &module.content {
+                    collect_template_fields(module_items.as_slice(), fields);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_struct_fields(
+    struct_item: &ItemStruct,
+    template_path: &str,
+    fields: &mut Vec<TemplateFieldInfo>,
+) {
+    if let Fields::Named(fields_named) = &struct_item.fields {
+        for field in &fields_named.named {
+            if let Some(name) = &field.ident {
+                fields.push(TemplateFieldInfo {
+                    relative_template_path: template_path.to_string(),
+                    parent_struct: struct_item.ident.to_string(),
+                    raw_type: field.ty.to_token_stream().to_string(),
+                    name: name.to_string(),
+                    line: field.span().start().line,
+                    character: field.span().start().column,
+                });
+            }
+        }
+    }
+}
+
+fn extract_template_path(item_struct: &ItemStruct) -> Option<String> {
+    for attr in &item_struct.attrs {
+        if attr.path().is_ident("template") {
+            let mut template_path: Option<String> = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("path") {
+                    let literal = meta.value()?.parse::<LitStr>()?;
+                    template_path = Some(literal.value());
+                }
+                Ok(())
+            });
+
+            if let Some(template_path) = template_path {
+                return Some(template_path);
+            }
+        }
+    }
+    None
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_template_fields;
+
+    #[test]
+    fn extracts_template_fields_from_nested_module_structs() {
+        let fields = parse_template_fields(
+            r#"
+            mod view {
+                use askama::Template;
+
+                #[derive(Template)]
+                #[template(path = "index.html")]
+                pub struct Page {
+                    pub title: String,
+                    pub visits: usize,
+                }
+            }
+            "#,
+        );
+
+        assert_eq!(fields.len(), 2);
+        assert!(fields.iter().any(|field| field.name == "title"));
+        assert!(fields.iter().any(|field| field.name == "visits"));
+        assert!(
+            fields
+                .iter()
+                .all(|field| field.relative_template_path == "index.html")
+        );
     }
 }

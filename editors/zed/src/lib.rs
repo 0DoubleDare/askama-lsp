@@ -1,4 +1,4 @@
-use zed_extension_api::{self as zed, Result, Worktree};
+use zed_extension_api::{self as zed, Result};
 
 struct AskamaLspExtension;
 
@@ -11,14 +11,13 @@ impl zed::Extension for AskamaLspExtension {
         &mut self,
         language_server_id: &zed_extension_api::LanguageServerId,
         worktree: &zed_extension_api::Worktree,
-    ) -> Result<zed::Command>
-    {
-        let lsp_path = worktree
-            .which("askama-lsp")
-            .ok_or_else(|| {
-                let home = std::env::var("HOME").unwrap_or_default();
-                format!("{home}/.cargo/bin/askama-lsp")
-            })?;
+    ) -> Result<zed::Command> {
+        let _ = language_server_id;
+
+        let lsp_path = worktree.which("askama-lsp").unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{home}/.cargo/bin/askama-lsp")
+        });
 
         Ok(zed::Command {
             command: lsp_path,
