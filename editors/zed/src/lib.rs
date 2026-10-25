@@ -15,7 +15,10 @@ impl zed::Extension for AskamaLspExtension {
     {
         let lsp_path = worktree
             .which("askama-lsp")
-            .ok_or_else(|| "askama-lsp binary not found")?;
+            .ok_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_default();
+                format!("{home}/.cargo/bin/askama-lsp")
+            })?;
 
         Ok(zed::Command {
             command: lsp_path,

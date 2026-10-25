@@ -1,4 +1,3 @@
-
 use tower_lsp_server::{
     LanguageServer,
     jsonrpc::Result,
@@ -14,7 +13,11 @@ use tower_lsp_server::{
 use crate::structs::Backend;
 
 impl LanguageServer for Backend {
-    async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        if let Some(workspace_folders) = params.workspace_folders {
+            let mut root = self.workspace_folders.lock().unwrap();
+            *root = workspace_folders;
+        }
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 definition_provider: Some(OneOf::Left(true)),
@@ -99,10 +102,10 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let content = params.text.unwrap_or_default();
 
-        {
-            let mut docs = self.buffers.documents.write().await;
-            docs.insert(uri.clone(), content.clone());
-        }
+        // {
+        //     let mut docs = self.buffers.documents.write().await;
+        //     docs.insert(uri.clone(), content.clone());
+        // }
 
         self.collect_fields_info(&uri, &content).await;
     }
@@ -111,10 +114,10 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let content = params.text_document.text;
 
-        {
-            let mut docs = self.buffers.documents.write().await;
-            docs.insert(uri.clone(), content.clone());
-        }
+        // {
+        //     let mut docs = self.buffers.documents.write().await;
+        //     docs.insert(uri.clone(), content.clone());
+        // }
 
         self.collect_fields_info(&uri, &content).await;
         // if uri.path().to_string().ends_with(".rs") {

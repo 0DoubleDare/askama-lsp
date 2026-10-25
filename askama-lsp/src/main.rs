@@ -1,4 +1,4 @@
-use std::{error::Error, path::PathBuf, sync::Arc};
+use std::{error::Error, path::PathBuf, sync::{Arc, Mutex}};
 
 use askama_lsp::{
     config::AskamaLspConfig,
@@ -31,6 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             fields_cache: Arc::new(RwLock::new(TemplateBuffers::with_capacity(512))),
             documents: Arc::new(RwLock::new(DocumentBuffers::with_capacity(512))),
         },
+        workspace_folders: Mutex::new(Vec::new()),
     })
     .finish();
 

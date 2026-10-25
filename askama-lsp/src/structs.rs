@@ -1,7 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 
-use tokio::sync::RwLock;
-use tower_lsp_server::{Client, ls_types::Uri};
+use tokio::sync::{RwLock};
+use tower_lsp_server::{Client, ls_types::{Uri, WorkspaceFolder}};
 
 use crate::config::AskamaLspConfig;
 
@@ -13,6 +13,7 @@ pub type DocumentBuffers = HashMap<Uri, String>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TemplateFieldInfo {
     pub parent_struct: String,
+    pub relative_template_path: String,
     pub raw_type: String,
     pub name: String,
     pub line: usize,
@@ -25,9 +26,10 @@ pub struct Buffers {
     pub documents: Arc<RwLock<DocumentBuffers>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Backend {
     pub config: AskamaLspConfig,
+    pub workspace_folders: Mutex<Vec<WorkspaceFolder>>,
     pub client: Client,
     pub buffers: Buffers,
 }
