@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use tower_lsp_server::{
     LanguageServer,
@@ -13,6 +13,7 @@ use tower_lsp_server::{
         TextDocumentSyncOptions, TextEdit,
     },
 };
+use tracing::{debug, trace};
 
 use crate::{
     config::AskamaLspConfig,
@@ -30,6 +31,10 @@ enum AskamaContext {
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         let folders = params.workspace_folders.unwrap_or_default();
+        debug!(
+            workspace_folder_count = folders.len(),
+            "Initializing Askama LSP"
+        );
         {
             let mut roots = self.workspace_folders.lock().unwrap();
             *roots = folders;
@@ -82,7 +87,7 @@ impl LanguageServer for Backend {
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
-        let uri_key = uri.to_string();
+        let uri_keys = template_uri_keys(&uri);
 
         let document_text = {
             let docs = self.buffers.documents.read().await;
@@ -91,8 +96,24 @@ impl LanguageServer for Backend {
 
         let fields = {
             let fields_cache = self.buffers.fields_cache.read().await;
-            fields_cache.get(&uri_key).cloned().unwrap_or_default()
+            let mut merged = Vec::new();
+            for key in &uri_keys {
+                if let Some(cached_fields) = fields_cache.get(key) {
+                    merged.extend(cached_fields.clone());
+                }
+            }
+            let mut seen = HashSet::new();
+            merged.retain(|field| seen.insert((field.parent_struct.clone(), field.name.clone())));
+            merged
         };
+
+        debug!(
+            uri = uri.as_str(),
+            uri_keys = ?uri_keys,
+            field_count = fields.len(),
+            has_document = document_text.is_some(),
+            "Computing completion response"
+        );
 
         let items = completion_items(fields.as_slice(), document_text.as_deref(), position);
         Ok(Some(CompletionResponse::Array(items)))
@@ -101,6 +122,7 @@ impl LanguageServer for Backend {
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
         let content = params.text.unwrap_or_default();
+        debug!(uri = uri.as_str(), bytes = content.len(), "Document saved");
         {
             let mut docs = self.buffers.documents.write().await;
             docs.insert(uri.clone(), content);
@@ -114,6 +136,12 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let content = params.text_document.text;
         let is_rust = uri.as_str().ends_with(".rs");
+        debug!(
+            uri = uri.as_str(),
+            is_rust,
+            bytes = content.len(),
+            "Document opened"
+        );
 
         {
             let mut docs = self.buffers.documents.write().await;
@@ -129,6 +157,11 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let is_rust = uri.as_str().ends_with(".rs");
         if let Some(change) = params.content_changes.last() {
+            trace!(
+                uri = uri.as_str(),
+                bytes = change.text.len(),
+                "Document changed"
+            );
             let mut docs = self.buffers.documents.write().await;
             docs.insert(uri.clone(), change.text.clone());
         }
@@ -139,6 +172,11 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        debug!(
+            added = params.event.added.len(),
+            removed = params.event.removed.len(),
+            "Workspace folders changed"
+        );
         {
             let mut folders = self.workspace_folders.lock().unwrap();
             folders.retain(|folder| {
@@ -190,6 +228,13 @@ fn completion_items(
 ) -> Vec<CompletionItem> {
     let (context, prefix, range, has_filter_pipe) =
         completion_context(document_text.unwrap_or(""), position);
+    trace!(
+        ?context,
+        %prefix,
+        ?range,
+        has_filter_pipe,
+        "Resolved Askama completion context"
+    );
 
     let mut items = Vec::new();
 
@@ -335,7 +380,9 @@ fn completion_context(text: &str, position: Position) -> (AskamaContext, String,
     let offset = position_to_offset(text, position);
     let prefix_start = word_start(text, offset);
     let prefix = text[prefix_start..offset].to_string();
-    let range = Range {
+    let context = detect_context(text, offset);
+
+    let mut range = Range {
         start: Position {
             line: position.line,
             character: position
@@ -345,7 +392,10 @@ fn completion_context(text: &str, position: Position) -> (AskamaContext, String,
         end: position,
     };
 
-    let context = detect_context(text, offset);
+    if context == AskamaContext::RootBrace {
+        range = root_brace_replacement_range(text, position, offset);
+    }
+
     let has_filter_pipe = if context == AskamaContext::Expression {
         let start = open_tag_index(text, offset, "{{");
         if let Some(start) = start {
@@ -358,6 +408,20 @@ fn completion_context(text: &str, position: Position) -> (AskamaContext, String,
     };
 
     (context, prefix, range, has_filter_pipe)
+}
+
+fn root_brace_replacement_range(text: &str, position: Position, offset: usize) -> Range {
+    if offset > 0 && text[..offset].chars().next_back() == Some('{') {
+        return Range {
+            start: offset_to_position(text, offset - 1),
+            end: position,
+        };
+    }
+
+    Range {
+        start: position,
+        end: position,
+    }
 }
 
 fn detect_context(text: &str, offset: usize) -> AskamaContext {
@@ -411,10 +475,44 @@ fn position_to_offset(text: &str, position: Position) -> usize {
                 .sum::<usize>();
             return offset + char_offset.min(chunk.len());
         }
+
         offset += chunk.len();
         line += 1;
     }
     text.len()
+}
+
+fn offset_to_position(text: &str, offset: usize) -> Position {
+    let mut line = 0u32;
+    let mut line_start = 0usize;
+    for chunk in text.split_inclusive('\n') {
+        let line_end = line_start + chunk.len();
+        if offset < line_end {
+            let character = text[line_start..offset].chars().count() as u32;
+            return Position { line, character };
+        }
+        line += 1;
+        line_start = line_end;
+    }
+
+    let character = text[line_start..text.len()].chars().count() as u32;
+    Position { line, character }
+}
+
+fn template_uri_keys(uri: &tower_lsp_server::ls_types::Uri) -> Vec<String> {
+    let mut keys = vec![uri.to_string()];
+
+    if let Some(path) = uri.to_file_path() {
+        let normalized = std::fs::canonicalize(path.as_ref()).unwrap_or(path.into_owned());
+        if let Some(normalized_uri) = tower_lsp_server::ls_types::Uri::from_file_path(normalized) {
+            let normalized_key = normalized_uri.to_string();
+            if !keys.contains(&normalized_key) {
+                keys.push(normalized_key);
+            }
+        }
+    }
+
+    keys
 }
 
 fn word_start(text: &str, mut offset: usize) -> usize {
@@ -435,7 +533,7 @@ mod tests {
 
     use crate::structs::TemplateFieldInfo;
 
-    use super::{AskamaContext, completion_items, detect_context};
+    use super::{AskamaContext, completion_items, detect_context, root_brace_replacement_range};
 
     fn sample_fields() -> Vec<TemplateFieldInfo> {
         vec![
@@ -494,6 +592,28 @@ mod tests {
         let items = completion_items(sample_fields().as_slice(), Some("{"), Position::new(0, 1));
         assert!(items.iter().any(|item| item.label == "{{  }}"));
         assert!(items.iter().any(|item| item.label == "{%  %}"));
+    }
+
+    #[test]
+    fn root_brace_completion_replaces_typed_opening_brace() {
+        let range = root_brace_replacement_range("{", Position::new(0, 1), 1);
+        assert_eq!(range.start, Position::new(0, 0));
+        assert_eq!(range.end, Position::new(0, 1));
+
+        let items = completion_items(sample_fields().as_slice(), Some("{"), Position::new(0, 1));
+        let expression = items
+            .iter()
+            .find(|item| item.label == "{{  }}")
+            .and_then(|item| item.text_edit.as_ref())
+            .expect("root expression completion item should have text edit");
+
+        let tower_lsp_server::ls_types::CompletionTextEdit::Edit(edit) = expression else {
+            panic!("expected regular text edit for root expression completion");
+        };
+
+        assert_eq!(edit.range.start, Position::new(0, 0));
+        assert_eq!(edit.range.end, Position::new(0, 1));
+        assert_eq!(edit.new_text, "{{  }}");
     }
 
     #[test]
