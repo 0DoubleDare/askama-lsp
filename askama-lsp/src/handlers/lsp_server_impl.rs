@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 
 use tower_lsp_server::{
     LanguageServer,
@@ -9,11 +8,10 @@ use tower_lsp_server::{
         GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult,
         InitializedParams, MessageType, OneOf, SaveOptions, ServerCapabilities,
         TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-        request::GotoDeclarationParams,
     },
 };
 
-use crate::{config::AskamaLspConfig, structs::Backend};
+use crate::structs::Backend;
 
 impl LanguageServer for Backend {
     async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
@@ -56,7 +54,7 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        let position = params.text_document_position.position;
+        let _position = params.text_document_position.position;
 
         tracing::info!("Completion trigger");
         let mut items: Vec<CompletionItem> = Vec::with_capacity(512);
@@ -133,7 +131,7 @@ impl LanguageServer for Backend {
 
     async fn goto_definition(
         &self,
-        params: GotoDefinitionParams,
+        _params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         Ok(None)
     }

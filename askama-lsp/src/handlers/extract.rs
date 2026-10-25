@@ -1,14 +1,10 @@
-use std::{collections::HashSet, error::Error, path::Path, sync::Arc};
+use std::{collections::HashSet, error::Error};
 
 use quote::ToTokens;
 use syn::{Fields, Item, ItemStruct, LitStr, spanned::Spanned};
-use tokio::sync::RwLock;
-use tower_lsp_server::{jsonrpc::Id::Null, ls_types::Uri};
+use tower_lsp_server::ls_types::Uri;
 
-use crate::{
-    config::AskamaLspConfig,
-    structs::{Backend, DocumentBuffers, TemplateBuffers, TemplateFieldInfo},
-};
+use crate::structs::{Backend, DocumentBuffers, TemplateBuffers, TemplateFieldInfo};
 
 impl Backend {
     pub fn parse_rust_file(
@@ -81,9 +77,9 @@ impl Backend {
     }
 
     pub fn initialize_scan(
-        dirs: &[String],
-        template_buf: TemplateBuffers,
-        document_buf: DocumentBuffers,
+        _dirs: &[String],
+        _template_buf: TemplateBuffers,
+        _document_buf: DocumentBuffers,
     ) {
     }
 
